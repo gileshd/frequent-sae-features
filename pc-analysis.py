@@ -209,19 +209,22 @@ def get_model_acts_dataset(tokens, batch_size=32):
 #%%
 
 # Use the function to get all model activations
-all_model_acts = get_model_acts_dataset(token_dataset[:1000]["tokens"])
+all_model_acts = get_model_acts_dataset(token_dataset[:10000]["tokens"])
 print(f"Shape of all model activations: {all_model_acts.shape}")
 
 # %%
 
-all_model_acts = get_model_acts_dataset(token_dataset["tokens"])
-print(f"Shape of all model activations: {all_model_acts.shape}")
+# all_model_acts = get_model_acts_dataset(token_dataset["tokens"])
+# print(f"Shape of all model activations: {all_model_acts.shape}")
 
 #%% 
 # Now you can use all_model_acts for your PCA
 flattened_acts = einops.rearrange(all_model_acts, 'b s ... -> (b s) ...')
 pca = fit_pca(flattened_acts)
 print(pca.explained_variance_ratio)
+
+plt.plot(pca.explained_variance_ratio);
+plt.yscale('log');
 
 #%%
 
@@ -262,6 +265,16 @@ plot_cosine_sim(pc3_cosine_sim, ax=ax[2], component=2)
 plt.tight_layout()
 
 # %%
+# Zoom in on top decoder weights.
+pc1_cosine_sim[np.argsort(pc1_cosine_sim)[::-1][:10]]
+decoder_weights = sae.W_dec.cpu().detach().numpy()
+pc1_cosine_sim = calc_pc_weight_cosine_sim(pca, decoder_weights, component=0)
+abs_sim = np.abs(pc1_cosine_sim)
+print(np.sort(abs_sim)[::-1])
+plt.plot(np.sort(abs_sim)[::-1][:100]);
+plt.xlabel('Decoder Weights')
+plt.ylabel('Abs Cosine Similarity with PC1');
+# %% 
 
 WWT = decoder_weights @ decoder_weights.T
 norms = np.linalg.norm(decoder_weights, axis=1)
@@ -296,17 +309,17 @@ with torch.no_grad():
     px.histogram(l0.flatten().cpu().numpy()).show()
 # %%
 
-def accumulate_feature_acts(sae, model, token_dataset, batch_size=32, num_batches=None):
+def accumulate_feature_acts(sae, model, tokens, batch_size=32, num_batches=None):
     sae.eval()
     all_feature_acts = []
     
     with torch.no_grad():
-        for i, batch in enumerate(tqdm(token_dataset.iter(batch_size=batch_size))):
-            if num_batches is not None and i >= num_batches:
+        for i in tqdm(range(0, tokens.shape[0], batch_size)):
+            if num_batches is not None and i // batch_size >= num_batches:
                 break
             
-            batch_tokens = batch["tokens"]
-            _, cache = model.run_with_cache(batch_tokens, prepend_bos=True)
+            batch = tokens[i:i+batch_size]
+            _, cache = model.run_with_cache(batch, prepend_bos=True)
             
             feature_acts = sae.encode(cache[sae.cfg.hook_name])
             all_feature_acts.append(feature_acts.cpu())  # Move to CPU to save GPU memory
@@ -316,15 +329,88 @@ def accumulate_feature_acts(sae, model, token_dataset, batch_size=32, num_batche
     return torch.cat(all_feature_acts, dim=0)
 
 # Usage example:
-accumulated_feature_acts = accumulate_feature_acts(sae, model, token_dataset, batch_size=32, num_batches=20)
+# Assuming token_dataset[:100_000]["tokens"] returns a tensor
+tokens = token_dataset[:1000]["tokens"]
+accumulated_feature_acts = accumulate_feature_acts(sae, model, tokens, batch_size=32, num_batches=None)
 
 # Calculate and display L0 stats
 l0 = (accumulated_feature_acts[:, 1:] > 0).float().sum(-1).detach()
 print("average l0", l0.mean().item())
 px.histogram(l0.flatten().cpu().numpy()).show()
+
+
+# def accumulate_feature_acts(sae, model, tokens, batch_size=32, num_batches=None):
+#     sae.eval()
+#     all_feature_acts = []
+    
+#     with torch.no_grad():
+#         for i, batch in enumerate(tqdm(tokens.iter(batch_size=batch_size))):
+#             if num_batches is not None and i >= num_batches:
+#                 break
+            
+#             _, cache = model.run_with_cache(batch, prepend_bos=True)
+            
+#             feature_acts = sae.encode(cache[sae.cfg.hook_name])
+#             all_feature_acts.append(feature_acts.cpu())  # Move to CPU to save GPU memory
+            
+#             del cache
+    
+#     return torch.cat(all_feature_acts, dim=0)
+
+# # Usage example:
+# accumulated_feature_acts = accumulate_feature_acts(sae, model, token_dataset, batch_size=32, num_batches=20)
+
+# # Calculate and display L0 stats
+# l0 = (accumulated_feature_acts[:, 1:] > 0).float().sum(-1).detach()
+# print("average l0", l0.mean().item())
+# px.histogram(l0.flatten().cpu().numpy()).show()
 # %%
 
 flat_sae_acts = einops.rearrange(accumulated_feature_acts, 'b s ... -> (b s) ...')
+px.histogram(flat_sae_acts[:1000].flatten().cpu().numpy()).show()
+
+# %%
+
+sae_latent_freqs = (flat_sae_acts > 0).numpy().mean(0)
+
+# %%
+
+# TODO: Add marginal histograms
+
+pc1_cosine_sim = calc_pc_weight_cosine_sim(pca, decoder_weights, component=0)
+plt.plot(sae_latent_freqs, np.abs(pc1_cosine_sim), '.', alpha=0.2);
+plt.xlabel('Frequency of SAE Latent');
+plt.ylabel('Abs Cosine Similarity with PC1');
+
+#%%
+
+pc2_cosine_sim = calc_pc_weight_cosine_sim(pca, decoder_weights, component=1)
+plt.plot(sae_latent_freqs, np.abs(pc2_cosine_sim), '.', alpha=0.2);
+plt.xlabel('Frequency of SAE Latent');
+plt.ylabel('Abs Cosine Similarity with PC2');
+
+#%%
+
+pc2_cosine_sim = calc_pc_weight_cosine_sim(pca, decoder_weights, component=2)
+plt.plot(sae_latent_freqs, np.abs(pc2_cosine_sim), '.', alpha=0.2);
+plt.xlabel('Frequency of SAE Latent');
+plt.ylabel('Abs Cosine Similarity with PC3');
+
+# %%
+
+cosine_sims = []
+for comp in range(10):
+    pc_cosine_sim = calc_pc_weight_cosine_sim(pca, decoder_weights, component=comp)
+    cosine_sims.append(pc_cosine_sim)
+
+stacked_cosine_sims = np.stack(cosine_sims)
+max_cosine_sims = np.max(np.abs(stacked_cosine_sims), axis=0)
+
+# %%
+
+plt.plot(sae_latent_freqs, max_cosine_sims, '.', alpha=0.2);
+plt.xlabel('PC');
+plt.ylabel('Max Abs Cosine Similarity');
 
 # %%
 
