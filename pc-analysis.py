@@ -212,6 +212,11 @@ def get_model_acts_dataset(tokens, batch_size=32):
 all_model_acts = get_model_acts_dataset(token_dataset[:1000]["tokens"])
 print(f"Shape of all model activations: {all_model_acts.shape}")
 
+# %%
+
+all_model_acts = get_model_acts_dataset(token_dataset["tokens"])
+print(f"Shape of all model activations: {all_model_acts.shape}")
+
 #%% 
 # Now you can use all_model_acts for your PCA
 flattened_acts = einops.rearrange(all_model_acts, 'b s ... -> (b s) ...')
@@ -321,4 +326,81 @@ px.histogram(l0.flatten().cpu().numpy()).show()
 
 flat_sae_acts = einops.rearrange(accumulated_feature_acts, 'b s ... -> (b s) ...')
 
+# %%
+
+import torch
+from tqdm import tqdm
+
+class FastIncrementalPCA:
+    def __init__(self, n_components):
+        self.n_components = n_components
+        self.mean = None
+        self.components = None
+        self.explained_variance = None
+        self.n_samples_seen = 0
+        self.sum = None
+        self.sum_squares = None
+
+    def partial_fit(self, X):
+        if self.mean is None:
+            self.mean = torch.zeros(X.shape[1], dtype=X.dtype, device=X.device)
+            self.sum = torch.zeros_like(self.mean)
+            self.sum_squares = torch.zeros_like(self.mean)
+
+        batch_size = X.shape[0]
+        self.n_samples_seen += batch_size
+
+        # Update sum and sum of squares
+        self.sum += torch.sum(X, dim=0)
+        self.sum_squares += torch.sum(X ** 2, dim=0)
+
+    def finalize(self):
+        # Compute final mean and covariance
+        self.mean = self.sum / self.n_samples_seen
+        total_variance = (self.sum_squares / self.n_samples_seen) - (self.mean ** 2)
+        
+        # Perform SVD on the covariance matrix
+        cov_matrix = torch.diag(total_variance)
+        U, S, V = torch.svd(cov_matrix)
+
+        # Store results
+        self.components = V[:, :self.n_components]
+        self.explained_variance = S[:self.n_components]
+        total_variance = torch.sum(S)
+        self.explained_variance_ratio = self.explained_variance / total_variance
+
+    def transform(self, X):
+        if self.components is None:
+            raise ValueError("PCA model has not been finalized. Call finalize() first.")
+        X_centered = X - self.mean
+        return torch.mm(X_centered, self.components)
+
+def fast_incremental_pca_on_dataset(get_model_acts, token_dataset, n_components=10, batch_size=32):
+    pca = FastIncrementalPCA(n_components=n_components)
+    
+    # Calculate total number of batches
+    total_samples = len(token_dataset)
+    total_batches = (total_samples + batch_size - 1) // batch_size  # Ceiling division
+    
+    with tqdm(total=total_batches, desc="Processing batches") as pbar:
+        for batch in token_dataset.iter(batch_size=batch_size):
+            batch_tokens = batch["tokens"]
+            batch_acts = get_model_acts(batch_tokens)
+            flattened_acts = einops.rearrange(batch_acts, 'b s ... -> (b s) ...')
+            pca.partial_fit(flattened_acts.cpu())  # Move to CPU if necessary
+            pbar.update(1)
+    
+    pca.finalize()
+    return pca
+
+# Usage
+pca = fast_incremental_pca_on_dataset(get_model_acts, token_dataset[:100_000])
+print(pca.explained_variance_ratio)
+
+# %%
+token_dataset
+# %%
+
+token_dataset.iter(batch_size=10)
+token_dataset[:10]
 # %%
