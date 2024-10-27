@@ -149,8 +149,9 @@ def save_sparse_activations(output_dir, sparse_activations, num_samples):
 # %%
 
 OUTPUT_DIR = "sae_activations"
-tokens = token_dataset[:640]["tokens"]
+n_samples = 960
+tokens = token_dataset[:n_samples]["tokens"]
 sparse_activations = accumulate_sparse_feature_acts(sae, model, tokens, batch_size=32)
-save_sparse_activations(OUTPUT_DIR, sparse_activations, num_samples=640)
+save_sparse_activations(OUTPUT_DIR, sparse_activations, num_samples=n_samples)
 
 # %%
