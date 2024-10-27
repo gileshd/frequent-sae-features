@@ -49,39 +49,72 @@ class IncrementalPCA:
         self.explained_variance_ratio: Optional[torch.Tensor] = None
         self.n_samples_seen: int = 0
         self.sum: Optional[torch.Tensor] = None
-        self.sum_squares: Optional[torch.Tensor] = None
+        # Instead of sum_squares, we'll maintain the covariance sum
+        self.cov_sum: Optional[torch.Tensor] = None
 
-    def partial_fit(self, X):
-        if self.mean is None:
-            self.mean = torch.zeros(X.shape[1], dtype=X.dtype, device=X.device)
-            self.sum = torch.zeros_like(self.mean)
-            self.sum_squares = torch.zeros_like(self.mean)
-
+    def partial_fit(self, X: torch.Tensor):
         batch_size = X.shape[0]
-        self.n_samples_seen += batch_size
+        n_features = X.shape[1]
+        
+        # Initialize parameters on first call
+        if self.mean is None:
+            self.mean = torch.zeros(n_features, dtype=X.dtype, device=X.device)
+            self.sum = torch.zeros_like(self.mean)
+            self.cov_sum = torch.zeros((n_features, n_features), 
+                                     dtype=X.dtype, 
+                                     device=X.device)
 
-        # Update sum and sum of squares
-        self.sum += torch.sum(X, dim=0)
-        self.sum_squares += torch.sum(X ** 2, dim=0)
+        # Update mean using the Welford's online algorithm
+        old_mean = self.mean.clone()
+        old_sample_count = self.n_samples_seen
+        new_sample_count = old_sample_count + batch_size
+        
+        # Update sum and mean
+        batch_sum = torch.sum(X, dim=0)
+        self.sum += batch_sum
+        self.mean = self.sum / new_sample_count
+        
+        # Center the batch data
+        X_centered = X - self.mean.unsqueeze(0)
+        
+        # Update covariance sum
+        # Using the formula: cov = (X - mean)^T @ (X - mean)
+        batch_cov = torch.mm(X_centered.t(), X_centered)
+        self.cov_sum += batch_cov
+        
+        # If this isn't the first batch, apply correction for the mean shift
+        if old_sample_count > 0:
+            # Correction term for mean shift
+            mean_diff = self.mean - old_mean
+            correction = (old_sample_count * batch_size) / new_sample_count * \
+                        torch.outer(mean_diff, mean_diff)
+            self.cov_sum += correction * new_sample_count
+        
+        self.n_samples_seen = new_sample_count
 
     def finalize(self):
-        assert self.sum is not None
-        assert self.sum_squares is not None
-        self.mean = self.sum / self.n_samples_seen
-        total_variance = (self.sum_squares / self.n_samples_seen) - (self.mean ** 2)
+        if self.n_samples_seen == 0:
+            raise ValueError("Cannot finalize PCA without any data")
+            
+        # Compute final covariance matrix
+        cov_matrix = self.cov_sum / (self.n_samples_seen - 1)
         
-        # Perform SVD on the covariance matrix
-        cov_matrix = torch.diag(total_variance)
-        U, S, V = torch.svd(cov_matrix)
-
+        # Perform eigendecomposition
+        eigenvalues, eigenvectors = torch.linalg.eigh(cov_matrix)
+        
+        # Sort eigenvectors by decreasing eigenvalues
+        idx = torch.argsort(eigenvalues, descending=True)
+        eigenvalues = eigenvalues[idx]
+        eigenvectors = eigenvectors[:, idx]
+        
         # Store results
-        self.components = V[:, :self.n_components]
-        self.explained_variance = S[:self.n_components]
-        total_variance = torch.sum(S)
+        self.components_ = eigenvectors[:, :self.n_components]
+        self.explained_variance = eigenvalues[:self.n_components]
+        total_variance = torch.sum(eigenvalues)
         self.explained_variance_ratio = self.explained_variance / total_variance
 
     def transform(self, X):
-        if self.components is None:
+        if self.components_ is None:
             raise ValueError("PCA model has not been finalized. Call finalize() first.")
         X_centered = X - self.mean
-        return torch.mm(X_centered, self.components)
+        return torch.mm(X_centered, self.components_)
