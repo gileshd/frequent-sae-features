@@ -33,7 +33,7 @@ def save_pyro_model(model, filename, optimizer=None):
     
     torch.save(checkpoint, filename)
 
-def load_pyro_model(model, filename, optimizer=None):
+def load_pyro_model(model, filename, optimizer=None, device=torch.device('cpu')):
     """
     Load a saved Pyro model along with its parameters and optimizer state.
     
@@ -47,7 +47,7 @@ def load_pyro_model(model, filename, optimizer=None):
         optimizer: Loaded optimizer
     """
     # Load checkpoint
-    checkpoint = torch.load(filename)
+    checkpoint = torch.load(filename, map_location=device)
     
     # Load model state
     model.load_state_dict(checkpoint['model_state_dict'])
