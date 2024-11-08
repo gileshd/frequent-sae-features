@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sae-topics"
+version = "0.1.0"
+authors = [
+  { name="Giles Harper-Donnelly", email="" },
+]
+description = "A short description of your package"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "requests>=2.28.0",
+    # Add your dependencies here
+]
+
+[project.urls]
+"Homepage" = "https://github.com/gileshd/sae-topics"
+"Bug Tracker" = "https://github.com/gileshd/sae-topics/issues"
+
