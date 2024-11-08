@@ -3,3 +3,4 @@ matplotlib
 torch
 jupyter
 sae-dashboard
+pyro-ppl
